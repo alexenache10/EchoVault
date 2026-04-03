@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     
-    WHISPER_MODEL: str = "base"
+    WHISPER_MODEL: str = "large-v3"
     # Allow CORS for common frontend development ports
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 

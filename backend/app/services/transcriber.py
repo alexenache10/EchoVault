@@ -25,19 +25,19 @@ class TranscriberService:
             logger.info("Model weights loaded into memory successfully.")
         return self._model
 
-    async def transcribe_stream(self, audio_path: str):
-        """Consumes normalized audio and yields speech-to-text segments."""
-        logger.info(f"Beginning inference on: {audio_path}")
+    async def transcribe_stream(self, audio_path: str, language: str = None):
+        logger.info(f"Beginning inference on: {audio_path} with language: {language or 'auto-detect'}")
         
-        # VAD filter removes non-speech segments to increase speed and accuracy
         segments, info = self.model.transcribe(
-            audio_path, beam_size=5, vad_filter=True
+            audio_path, 
+            beam_size=5, 
+            vad_filter=True,
+            language=language
         )
 
-        logger.info(f"Detected language: {info.language} with probability {info.language_probability:.2f}")
+        yield {"event": "info", "payload": {"language": info.language, "duration": round(info.duration, 2)}}
 
         for segment in segments:
-            # Yielding data as a dictionary for direct WebSocket serialization
             yield {
                 "event": "segment",
                 "payload": {

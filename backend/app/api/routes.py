@@ -4,55 +4,68 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.audio_processor import AudioProcessor
 from app.services.transcriber import transcriber
 from app.utils.logger import logger
+from app.models.schemas import TranscribeRequest  # Folosim doar definitia din schemas
 
 router = APIRouter()
 
 @router.websocket("/ws/transcribe")
 async def websocket_transcription(websocket: WebSocket):
-    """
-    Handles stateful WebSocket connection for real-time transcription streaming.
-    Client sends a JSON containing the 'file_path' to begin the pipeline.
-    """
     await websocket.accept()
     client_id = f"{websocket.client.host}:{websocket.client.port}"
-    logger.info(f"New WebSocket session established: {client_id}")
+    logger.info(f"New WebSocket session: {client_id}")
     
     temp_audio = f"temp_ws_{os.getpid()}.wav"
-    full_transcript_buffer = [] # Prepared for future DB persistence
+    full_transcript_buffer = []
 
     try:
-        # Expecting JSON: {"file_path": "/absolute/path/to/media.mp4"}
+        # Asteptam JSON: {"file_path": "...", "language": "ro"}
         raw_input = await websocket.receive_text()
         data = json.loads(raw_input)
         file_path = data.get("file_path")
+        language = data.get("language", "ro") # Default ro daca nu e trimis
 
-        if not file_path:
-            logger.warning(f"Client {client_id} sent empty file_path")
-            await websocket.send_json({"event": "error", "payload": "Missing file_path"})
+        if not file_path or not os.path.exists(file_path):
+            await websocket.send_json({"event": "error", "payload": "Invalid file path"})
             return
 
-        # Phase 1: Signal Extraction
-        await websocket.send_json({"event": "status", "payload": "Extracting audio signal..."})
+        await websocket.send_json({"event": "status", "payload": "Extracting audio..."})
         AudioProcessor.extract_audio(file_path, temp_audio)
 
-        # Phase 2: Neural Inference
-        await websocket.send_json({"event": "status", "payload": "AI model is processing..."})
-        async for packet in transcriber.transcribe_stream(temp_audio):
+        await websocket.send_json({"event": "status", "payload": "Processing AI..."})
+        async for packet in transcriber.transcribe_stream(temp_audio, language=language):
             if packet["event"] == "segment":
                 full_transcript_buffer.append(packet["payload"]["text"])
             await websocket.send_json(packet)
 
-        # TODO: Trigger Database Persistence Layer here
-        # Example: await db.save_transcription(file_path, " ".join(full_transcript_buffer))
-        logger.info(f"Transcription completed for {client_id}. Buffer size: {len(full_transcript_buffer)} segments.")
-        
-        await websocket.send_json({"event": "completed", "payload": "Process finished successfully"})
+        logger.info(f"WS Completed for {client_id}")
+        await websocket.send_json({"event": "completed", "payload": "Success"})
 
-    except WebSocketDisconnect:
-        logger.info(f"Client {client_id} disconnected prematurely.")
     except Exception as e:
-        logger.error(f"Pipeline failure for {client_id}: {str(e)}")
-        await websocket.send_json({"event": "error", "payload": f"Internal Error: {str(e)}"})
+        logger.error(f"WS Error: {str(e)}")
+        await websocket.send_json({"event": "error", "payload": str(e)})
     finally:
         AudioProcessor.cleanup(temp_audio)
         await websocket.close()
+
+@router.post("/transcribe/sync")
+async def manual_transcription(payload: TranscribeRequest):
+    temp_audio = f"temp_sync_{os.getpid()}.wav"
+    full_text = []
+    
+    try:
+        # Acum payload.language va functiona pentru ca vine din schemas.py
+        AudioProcessor.extract_audio(payload.file_path, temp_audio)
+        
+        async for packet in transcriber.transcribe_stream(temp_audio, language=payload.language):
+            if packet["event"] == "segment":
+                full_text.append(packet["payload"]["text"])
+        
+        return {
+            "status": "success",
+            "transcript": " ".join(full_text)
+        }
+    except Exception as e:
+        logger.error(f"Sync test failed: {str(e)}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        AudioProcessor.cleanup(temp_audio)
