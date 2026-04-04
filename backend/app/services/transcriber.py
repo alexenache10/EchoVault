@@ -1,41 +1,47 @@
+import time
 from faster_whisper import WhisperModel
 from app.core.config import settings
 from app.utils.logger import logger
+from app.services.model_manager import ModelManager
 
 class TranscriberService:
     _instance = None
+    _current_model_size = None
     _model = None
 
     def __new__(cls):
-        # Singleton pattern prevents redundant model loading into VRAM/RAM
         if cls._instance is None:
             cls._instance = super(TranscriberService, cls).__new__(cls)
         return cls._instance
 
-    @property
-    def model(self) -> WhisperModel:
-        if self._model is None:
-            logger.info(f"Loading AI model [{settings.WHISPER_MODEL}] on {settings.COMPUTE_DEVICE}")
+    def _get_model(self, model_size: str) -> WhisperModel:
+        if self._model is None or self._current_model_size != model_size:
+            local_model_path = ModelManager.ensure_model(model_size)
+            
+            logger.info(f"Loading local AI model from {local_model_path} on {settings.COMPUTE_DEVICE}")
             self._model = WhisperModel(
-                settings.WHISPER_MODEL,
+                model_size_or_path=local_model_path,
                 device=settings.COMPUTE_DEVICE,
                 compute_type=settings.COMPUTE_TYPE,
-                download_root="./models"
+                local_files_only=True
             )
-            logger.info("Model weights loaded into memory successfully.")
+            self._current_model_size = model_size
         return self._model
 
-    async def transcribe_stream(self, audio_path: str, language: str = None):
-        logger.info(f"Beginning inference on: {audio_path} with language: {language or 'auto-detect'}")
+    async def transcribe_stream(self, audio_path: str, model_size: str = "base", language: str = "ro"):
+        start_time = time.time()
+        logger.info(f"Initiating inference | Model: [{model_size}] | Target Lang: [{language}] | Target File: {audio_path}")
         
-        segments, info = self.model.transcribe(
-            audio_path, 
-            beam_size=5, 
-            vad_filter=True,
-            language=language
+        model = self._get_model(model_size)
+        
+        segments, info = model.transcribe(
+            audio_path,
+            language=language,
+            beam_size=5,
+            vad_filter=True
         )
 
-        yield {"event": "info", "payload": {"language": info.language, "duration": round(info.duration, 2)}}
+        yield {"event": "info", "payload": {"language": info.language, "model": model_size}}
 
         for segment in segments:
             yield {
@@ -47,6 +53,7 @@ class TranscriberService:
                 }
             }
         
-        logger.info("Inference stream reached EOF (End of File).")
+        duration = round(time.time() - start_time, 2)
+        logger.info(f"Inference completed | Model: [{model_size}] | Processing Time: {duration} seconds")
 
 transcriber = TranscriberService()

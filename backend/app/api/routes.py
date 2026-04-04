@@ -4,7 +4,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.audio_processor import AudioProcessor
 from app.services.transcriber import transcriber
 from app.utils.logger import logger
-from app.models.schemas import TranscribeRequest  # Folosim doar definitia din schemas
+from app.models.schemas import TranscribeRequest
 
 router = APIRouter()
 
@@ -18,11 +18,12 @@ async def websocket_transcription(websocket: WebSocket):
     full_transcript_buffer = []
 
     try:
-        # Asteptam JSON: {"file_path": "...", "language": "ro"}
         raw_input = await websocket.receive_text()
         data = json.loads(raw_input)
+        
         file_path = data.get("file_path")
-        language = data.get("language", "ro") # Default ro daca nu e trimis
+        language = data.get("language", "ro")
+        model_size = data.get("model_size", "base")
 
         if not file_path or not os.path.exists(file_path):
             await websocket.send_json({"event": "error", "payload": "Invalid file path"})
@@ -32,7 +33,7 @@ async def websocket_transcription(websocket: WebSocket):
         AudioProcessor.extract_audio(file_path, temp_audio)
 
         await websocket.send_json({"event": "status", "payload": "Processing AI..."})
-        async for packet in transcriber.transcribe_stream(temp_audio, language=language):
+        async for packet in transcriber.transcribe_stream(temp_audio, model_size=model_size, language=language):
             if packet["event"] == "segment":
                 full_transcript_buffer.append(packet["payload"]["text"])
             await websocket.send_json(packet)
@@ -53,10 +54,13 @@ async def manual_transcription(payload: TranscribeRequest):
     full_text = []
     
     try:
-        # Acum payload.language va functiona pentru ca vine din schemas.py
         AudioProcessor.extract_audio(payload.file_path, temp_audio)
         
-        async for packet in transcriber.transcribe_stream(temp_audio, language=payload.language):
+        async for packet in transcriber.transcribe_stream(
+            temp_audio, 
+            model_size=payload.model_size, 
+            language=payload.language
+        ):
             if packet["event"] == "segment":
                 full_text.append(packet["payload"]["text"])
         
