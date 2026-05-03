@@ -4,12 +4,14 @@ from contextlib import asynccontextmanager
 from app.api.routes import router as api_router
 from app.core.config import settings
 from app.utils.logger import logger
-
+from app.models.database import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize resources or log system info
-    logger.info(f"Starting {settings.PROJECT_NAME} Engine v{settings.VERSION}")
+    
+    init_db()
     logger.info(f"Compute Hardware detected: {settings.COMPUTE_DEVICE}")
+    logger.info(f"Starting {settings.PROJECT_NAME} Engine v{settings.VERSION}")
     yield
     # Shutdown: Clean up or close persistent connections
     logger.info(f"Shutting down {settings.PROJECT_NAME} Engine")

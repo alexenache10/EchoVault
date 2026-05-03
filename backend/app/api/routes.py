@@ -1,12 +1,23 @@
 import json
 import os
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from app.services.audio_processor import AudioProcessor
 from app.services.transcriber import transcriber
 from app.utils.logger import logger
 from app.models.schemas import TranscribeRequest
+from collections import deque
+from app.models.database import SessionLocal, TranscriptionRecord
+from sqlalchemy.orm import Session
+from fastapi.responses import FileResponse
 
 router = APIRouter()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @router.websocket("/ws/transcribe")
 async def websocket_transcription(websocket: WebSocket):
@@ -14,8 +25,9 @@ async def websocket_transcription(websocket: WebSocket):
     client_id = f"{websocket.client.host}:{websocket.client.port}"
     logger.info(f"New WebSocket session: {client_id}")
     
+
+    db = SessionLocal()
     temp_audio = f"temp_ws_{os.getpid()}.wav"
-    full_transcript_buffer = []
 
     try:
         raw_input = await websocket.receive_text()
@@ -33,9 +45,14 @@ async def websocket_transcription(websocket: WebSocket):
         AudioProcessor.extract_audio(file_path, temp_audio)
 
         await websocket.send_json({"event": "status", "payload": "Processing AI..."})
-        async for packet in transcriber.transcribe_stream(temp_audio, model_size=model_size, language=language):
-            if packet["event"] == "segment":
-                full_transcript_buffer.append(packet["payload"]["text"])
+        
+
+        async for packet in transcriber.transcribe_stream(
+            temp_audio, 
+            db=db, 
+            model_size=model_size, 
+            language=language
+        ):
             await websocket.send_json(packet)
 
         logger.info(f"WS Completed for {client_id}")
@@ -45,11 +62,15 @@ async def websocket_transcription(websocket: WebSocket):
         logger.error(f"WS Error: {str(e)}")
         await websocket.send_json({"event": "error", "payload": str(e)})
     finally:
+        db.close()
         AudioProcessor.cleanup(temp_audio)
-        await websocket.close()
+        try:
+            await websocket.close()
+        except:
+            pass
 
 @router.post("/transcribe/sync")
-async def manual_transcription(payload: TranscribeRequest):
+async def manual_transcription(payload: TranscribeRequest, db: Session = Depends(get_db)):
     temp_audio = f"temp_sync_{os.getpid()}.wav"
     full_text = []
     
@@ -58,6 +79,7 @@ async def manual_transcription(payload: TranscribeRequest):
         
         async for packet in transcriber.transcribe_stream(
             temp_audio, 
+            db=db, 
             model_size=payload.model_size, 
             language=payload.language
         ):
@@ -73,3 +95,37 @@ async def manual_transcription(payload: TranscribeRequest):
         return {"status": "error", "message": str(e)}
     finally:
         AudioProcessor.cleanup(temp_audio)
+
+@router.get("/logs")
+async def get_logs(lines: int = 100):
+    log_file = "logs/app.log"
+    if not os.path.exists(log_file):
+        return {"status": "error", "message": "Log file not found"}
+    
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+
+            last_lines = deque(f, maxlen=lines)
+            return {"status": "success", "logs": "".join(last_lines)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
+@router.get("/history")
+async def get_history(db: Session = Depends(get_db)):
+    records = db.query(TranscriptionRecord).order_by(TranscriptionRecord.timestamp.desc()).all()
+    return records
+
+@router.get("/hardware")
+async def get_hardware_status():
+    import torch
+    return {
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "engine": "faster-whisper",
+        "vram_detected": torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 0
+    }
+
+@router.get("/stream")
+async def stream_media(path: str):
+    if not os.path.exists(path):
+        return {"error": "File not found"}
+    return FileResponse(path)
