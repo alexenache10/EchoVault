@@ -1,12 +1,12 @@
 import { useCallback, useRef } from 'react';
 import { useVaultStore } from '../store/useVaultStore';
-import  type { WSMessage } from '../types';
+import type { WSMessage } from '../types';
 
 export const useTranscriptionWS = () => {
   const socketRef = useRef<WebSocket | null>(null);
   const { addSegment, setProcessing, resetSegments } = useVaultStore();
 
-  const startTranscription = useCallback((filePath: string, modelSize: string, language: string) => {
+  const startTranscription = useCallback((filePath: string, modelSize: string, language: string, device: string) => {
     resetSegments();
     setProcessing(true);
 
@@ -14,10 +14,12 @@ export const useTranscriptionWS = () => {
     socketRef.current = socket;
 
     socket.onopen = () => {
+
       socket.send(JSON.stringify({
         file_path: filePath,
         model_size: modelSize,
-        language: language
+        language: language,
+        device: device
       }));
     };
 
@@ -33,7 +35,7 @@ export const useTranscriptionWS = () => {
           socket.close();
           break;
         case 'error':
-          console.error("Inference Error:", data.payload);
+          console.error("WS Error:", data.payload);
           setProcessing(false);
           break;
       }

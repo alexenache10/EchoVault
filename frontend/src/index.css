@@ -1,37 +1,73 @@
 @import "tailwindcss";
 
 :root {
-  --bg-vault-dark: #0f172a;
-  --bg-vault-panel: #1e293b;
-  --accent-blue: #2563eb;
+  --os-bg: #020617;
+  --os-panel: #0f172a;
+  --os-border: rgba(51, 65, 85, 0.4);
+  --os-accent: #3b82f6;
+  --os-accent-glow: rgba(59, 130, 246, 0.25);
+  --os-danger: #ef4444;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 body {
-  background-color: var(--bg-vault-dark);
-  color: #f8fafc;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--os-bg);
+  color: #f1f5f9;
+  font-family: 'Inter', system-ui, sans-serif;
   overflow: hidden;
 }
 
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
+@layer components {
+  .vault-panel {
+    @apply bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 rounded-xl transition-all duration-300;
+  }
+
+  .vault-panel:hover {
+    @apply border-blue-500/30 shadow-[0_0_20px_rgba(59,130,246,0.1)];
+  }
+
+  .btn-primary {
+    @apply relative overflow-hidden px-6 py-2.5 rounded-lg font-bold text-sm tracking-tight transition-all duration-200;
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    @apply -translate-y-0.5 brightness-110;
+    box-shadow: 0 0 20px var(--os-accent-glow);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    @apply translate-y-0 scale-95;
+  }
+
+  .btn-primary:disabled {
+    @apply opacity-50 grayscale cursor-not-allowed;
+  }
+
+  .input-tactical {
+    @apply bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm transition-all outline-none text-slate-300;
+    font-family: var(--font-mono);
+  }
+
+  .input-tactical:focus {
+    @apply border-blue-500/50 ring-2 ring-blue-500/10 bg-slate-900;
+  }
+
+  .vault-row {
+    @apply transition-colors duration-200 border-b border-slate-800/50;
+  }
+
+  .vault-row:hover {
+    @apply bg-blue-500/5 cursor-default;
+  }
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: #0f172a;
-}
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { @apply bg-slate-800 rounded-full hover:bg-slate-700; }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 10px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569;
-}
-
-.glass-panel {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+.terminal-stream {
+  @apply font-mono text-[13px] leading-relaxed antialiased text-slate-300;
+  background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.02) 1px, transparent 0);
+  background-size: 24px 24px;
 }

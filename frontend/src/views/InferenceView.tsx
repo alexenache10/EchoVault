@@ -1,24 +1,39 @@
-import React, { useState, useRef } from 'react';
-import { Upload, Play, Cpu, Zap, CheckCircle2 } from "lucide-react";
+import React, { useState, useEffect } from 'react';
+import { Play, Cpu, Zap, LayoutList, AlignLeft, Video, Activity, Square, Globe } from "lucide-react";
 import { useVaultStore } from '../store/useVaultStore';
 import { useTranscriptionWS } from '../hooks/useWebSocket';
+import { WHISPER_MODELS } from '../utils/models';
+import { formatTimestamp } from '../utils/time';
 
 const InferenceView: React.FC = () => {
   const [filePath, setFilePath] = useState("");
   const [modelSize, setModelSize] = useState("base");
-  const videoRef = useRef<HTMLVideoElement>(null);
-  
-  const { currentSegments, isProcessing } = useVaultStore();
+  const [language, setLanguage] = useState("ro"); // Default Romanian
+  const [targetDevice, setTargetDevice] = useState("cuda");
+  const [displayMode, setDisplayMode] = useState<'timeline' | 'reading'>('timeline');
+  const [hwStats, setHwStats] = useState({ device: "cpu", vram_usage: 0, vram_total: 1 });
+
+  const { currentSegments, isProcessing, setProcessing } = useVaultStore();
   const { startTranscription } = useTranscriptionWS();
 
-  const handleStart = () => {
-    if (filePath) startTranscription(filePath, modelSize, "ro");
-  };
+  useEffect(() => {
+    const fetchHW = () => 
+      fetch('http://localhost:8000/api/v1/hardware')
+        .then(r => r.json())
+        .then(setHwStats)
+        .catch(err => console.error("Hardware Telemetry Offline"));
+    
+    fetchHW();
+    const interval = setInterval(fetchHW, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const seekTo = (seconds: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = seconds;
-      videoRef.current.play();
+  const handleStop = async () => {
+    try {
+      await fetch('http://localhost:8000/api/v1/transcribe/stop', { method: 'POST' });
+      setProcessing(false);
+    } catch (e) {
+      console.error("Failed to send stop signal");
     }
   };
 
@@ -26,91 +41,140 @@ const InferenceView: React.FC = () => {
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-6">
-          {/* Configurare Sursă */}
-          <div className="bg-[#1e293b] p-8 rounded-2xl border border-slate-800 shadow-2xl">
-            <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-xl p-10 hover:border-blue-500/50 transition-all group">
-              <Upload className="w-10 h-10 text-slate-500 group-hover:text-blue-400 mb-4 transition-colors" />
-              <input 
-                type="text" 
-                placeholder="Paste absolute file path (e.g. C:\media\video.mp4)"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                value={filePath}
-                onChange={(e) => setFilePath(e.target.value)}
-              />
-            </div>
-            
-            <div className="flex gap-4 mt-6">
-              <div className="flex-1 flex items-center gap-3 bg-slate-900 px-4 rounded-lg border border-slate-700">
-                <Cpu className="w-4 h-4 text-blue-400" />
-                <select 
-                  value={modelSize}
-                  onChange={(e) => setModelSize(e.target.value)}
-                  className="bg-transparent w-full py-2.5 text-sm outline-none"
-                >
-                  <option value="base">Whisper Base (Fast)</option>
-                  <option value="large-v3">Whisper Large V3 (Accurate)</option>
-                </select>
+          <div className="vault-panel p-8">
+            <div className="flex flex-col gap-6">
+              <div>
+                <label className="text-[10px] uppercase font-black text-slate-500 mb-2 block tracking-widest">Target Resource Path</label>
+                <input 
+                  type="text" 
+                  placeholder="/mnt/d/path/to/media.mp4"
+                  className="w-full input-tactical"
+                  value={filePath}
+                  onChange={(e) => setFilePath(e.target.value)}
+                  disabled={isProcessing}
+                />
               </div>
-              <button 
-                onClick={handleStart}
-                disabled={isProcessing || !filePath}
-                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-8 rounded-lg font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-900/20"
-              >
-                {isProcessing ? <Zap className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-                Run Engine
-              </button>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-black text-slate-500 tracking-widest">AI Model</label>
+                  <select 
+                    value={modelSize} 
+                    onChange={(e) => setModelSize(e.target.value)}
+                    disabled={isProcessing}
+                    className="w-full input-tactical h-[42px]"
+                  >
+                    {WHISPER_MODELS.map(m => (
+                      <option key={m.id} value={m.id}>{"★".repeat(m.stars).padEnd(5, "☆")} {m.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-black text-slate-500 tracking-widest">Inference Language</label>
+                  <div className="relative">
+                    <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                    <select 
+                      value={language} 
+                      onChange={(e) => setLanguage(e.target.value)}
+                      disabled={isProcessing}
+                      className="w-full input-tactical pl-10 h-[42px]"
+                    >
+                      <option value="ro">Romanian</option>
+                      <option value="en">English</option>
+                      <option value="de">German</option>
+                      <option value="fr">French</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-black text-slate-500 tracking-widest">Compute Unit</label>
+                  <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800 h-[42px]">
+                    <button 
+                      disabled={isProcessing}
+                      onClick={() => setTargetDevice("cuda")}
+                      className={`flex-1 flex items-center justify-center gap-2 rounded-md text-[10px] font-black transition-all ${targetDevice === 'cuda' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                    ><Cpu size={12}/> GPU</button>
+                    <button 
+                      disabled={isProcessing}
+                      onClick={() => setTargetDevice("cpu")}
+                      className={`flex-1 flex items-center justify-center gap-2 rounded-md text-[10px] font-black transition-all ${targetDevice === 'cpu' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                    ><Activity size={12}/> CPU</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-4 mt-8">
+              {!isProcessing ? (
+                <button 
+                  onClick={() => startTranscription(filePath, modelSize, language, targetDevice)}
+                  disabled={!filePath}
+                  className="flex-1 btn-primary py-3 flex items-center justify-center gap-3"
+                >
+                  <Zap size={18} className="fill-current" /> RUN ENGINE
+                </button>
+              ) : (
+                <div className="flex-1 flex items-center justify-between bg-blue-500/5 border border-blue-500/20 px-6 py-3 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <div className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400">Processing Stream...</span>
+                  </div>
+                  <button onClick={handleStop} className="btn-stop p-2 w-10 h-10 group" title="Emergency Stop">
+                    <Square size={16} className="fill-current group-hover:scale-90 transition-transform" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Terminal Segmente */}
-          <div className="bg-[#0f172a] rounded-2xl border border-slate-800 overflow-hidden h-[400px] flex flex-col shadow-inner">
-            <div className="bg-slate-800/50 px-6 py-3 border-b border-slate-800 flex justify-between items-center">
-              <span className="text-xs font-black uppercase tracking-widest text-slate-400">Transcription Stream</span>
-              {isProcessing && <span className="text-[10px] text-blue-400 animate-pulse font-mono">LIVE_INFERENCE_ACTIVE</span>}
+          <div className="bg-slate-950/50 rounded-2xl border border-slate-800/50 overflow-hidden h-[450px] flex flex-col shadow-inner">
+            <div className="bg-slate-900/80 px-6 py-3 border-b border-slate-800 flex justify-between items-center">
+              <div className="flex gap-2">
+                <button onClick={() => setDisplayMode('timeline')} className={`p-2 rounded-md transition-colors ${displayMode === 'timeline' ? 'text-blue-400 bg-blue-400/10' : 'text-slate-500'}`}><LayoutList size={18} /></button>
+                <button onClick={() => setDisplayMode('reading')} className={`p-2 rounded-md transition-colors ${displayMode === 'reading' ? 'text-blue-400 bg-blue-400/10' : 'text-slate-500'}`}><AlignLeft size={18} /></button>
+              </div>
+              <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">Output://Stream_Terminal</span>
             </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-3 font-mono text-sm custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar terminal-stream">
               {currentSegments.map((s, i) => (
-                <div 
-                  key={i} 
-                  onClick={() => seekTo(s.start)}
-                  className="flex gap-4 p-2 rounded-lg hover:bg-blue-500/10 cursor-pointer transition-colors border border-transparent hover:border-blue-500/20 group"
-                >
-                  <span className="text-blue-500 font-bold w-16 group-hover:scale-110 transition-transform">[{s.start}s]</span>
-                  <span className="text-slate-300">{s.text}</span>
+                <div key={i} className={`gap-6 py-1 ${displayMode === 'reading' ? 'inline' : 'flex border-b border-slate-800/30'}`}>
+                   {displayMode === 'timeline' && <span className="text-blue-500/80 w-24 shrink-0 font-bold">[{formatTimestamp(s.start)}]</span>}
+                   <span className="text-slate-300 antialiased">{s.text} </span>
                 </div>
               ))}
-              {currentSegments.length === 0 && !isProcessing && (
-                <p className="text-slate-600 italic">No active process. Waiting for input...</p>
-              )}
             </div>
           </div>
         </div>
 
-        {/* Player & Stats */}
         <div className="space-y-6">
-          <div className="bg-[#1e293b] p-6 rounded-2xl border border-slate-800 shadow-xl">
-            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-tighter mb-4 flex items-center gap-2">
-              <Play className="w-4 h-4 fill-blue-500 text-blue-500" /> Media Preview
-            </h3>
-            <video 
-              ref={videoRef}
-              controls 
-              className="w-full aspect-video bg-black rounded-lg shadow-2xl"
-              src={filePath ? `http://localhost:8000/api/v1/stream?path=${encodeURIComponent(filePath)}` : undefined}
-            />
+          <div className="vault-panel p-6 shadow-xl">
+             <h4 className="text-[10px] font-black uppercase text-slate-500 mb-4 tracking-widest flex items-center gap-2"><Video size={14} className="text-blue-500" /> Media Preview</h4>
+             <video 
+                className="w-full aspect-video bg-black rounded-lg border border-slate-800 shadow-2xl"
+                controls
+                src={filePath ? `http://localhost:8000/api/v1/stream?path=${encodeURIComponent(filePath)}` : undefined}
+             />
           </div>
-          
-          <div className="bg-blue-600/10 border border-blue-500/20 p-6 rounded-2xl">
-            <h4 className="text-blue-400 text-xs font-black uppercase mb-2">Engine Status</h4>
-            <div className="space-y-2">
-               <div className="flex justify-between text-xs">
-                 <span className="text-slate-400">VRAM Usage:</span>
-                 <span className="text-slate-200 font-mono">~2.4 GB</span>
+
+          <div className="vault-panel p-6 shadow-xl">
+             <h4 className="text-[10px] font-black uppercase text-slate-500 mb-4 tracking-widest">Hardware Telemetry</h4>
+             <div className="space-y-4">
+               <div>
+                 <div className="flex justify-between text-[10px] mb-2">
+                   <span className="text-slate-400 font-bold uppercase">VRAM Usage</span>
+                   <span className="text-blue-400 font-mono">{hwStats.vram_usage.toFixed(2)} GB</span>
+                 </div>
+                 <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
+                    <div className="bg-blue-600 h-full transition-all duration-1000" style={{ width: `${(hwStats.vram_usage / hwStats.vram_total) * 100}%` }} />
+                 </div>
                </div>
-               <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                 <div className="bg-blue-500 h-full w-[45%]" />
-               </div>
-            </div>
+               <p className="text-[9px] text-slate-600 italic">Target: {hwStats.device.toUpperCase()} Control</p>
+             </div>
           </div>
         </div>
       </div>

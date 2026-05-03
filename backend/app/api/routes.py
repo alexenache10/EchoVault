@@ -9,7 +9,7 @@ from collections import deque
 from app.models.database import SessionLocal, TranscriptionRecord
 from sqlalchemy.orm import Session
 from fastapi.responses import FileResponse
-
+import torch
 router = APIRouter()
 
 def get_db():
@@ -22,10 +22,6 @@ def get_db():
 @router.websocket("/ws/transcribe")
 async def websocket_transcription(websocket: WebSocket):
     await websocket.accept()
-    client_id = f"{websocket.client.host}:{websocket.client.port}"
-    logger.info(f"New WebSocket session: {client_id}")
-    
-
     db = SessionLocal()
     temp_audio = f"temp_ws_{os.getpid()}.wav"
 
@@ -36,6 +32,7 @@ async def websocket_transcription(websocket: WebSocket):
         file_path = data.get("file_path")
         language = data.get("language", "ro")
         model_size = data.get("model_size", "base")
+        device = data.get("device", "cuda")
 
         if not file_path or not os.path.exists(file_path):
             await websocket.send_json({"event": "error", "payload": "Invalid file path"})
@@ -46,21 +43,27 @@ async def websocket_transcription(websocket: WebSocket):
 
         await websocket.send_json({"event": "status", "payload": "Processing AI..."})
         
-
         async for packet in transcriber.transcribe_stream(
             temp_audio, 
             db=db, 
             model_size=model_size, 
-            language=language
+            language=language,
+            device=device,
+            original_path=file_path
         ):
             await websocket.send_json(packet)
 
-        logger.info(f"WS Completed for {client_id}")
         await websocket.send_json({"event": "completed", "payload": "Success"})
 
+    except WebSocketDisconnect:
+        logger.info("Client disconnected. Triggering graceful AI termination.")
+        transcriber.stop_inference()
     except Exception as e:
         logger.error(f"WS Error: {str(e)}")
-        await websocket.send_json({"event": "error", "payload": str(e)})
+        try:
+            await websocket.send_json({"event": "error", "payload": str(e)})
+        except:
+            pass
     finally:
         db.close()
         AudioProcessor.cleanup(temp_audio)
@@ -69,32 +72,32 @@ async def websocket_transcription(websocket: WebSocket):
         except:
             pass
 
-@router.post("/transcribe/sync")
-async def manual_transcription(payload: TranscribeRequest, db: Session = Depends(get_db)):
-    temp_audio = f"temp_sync_{os.getpid()}.wav"
-    full_text = []
+# @router.post("/transcribe/sync")
+# async def manual_transcription(payload: TranscribeRequest, db: Session = Depends(get_db)):
+#     temp_audio = f"temp_sync_{os.getpid()}.wav"
+#     full_text = []
     
-    try:
-        AudioProcessor.extract_audio(payload.file_path, temp_audio)
+#     try:
+#         AudioProcessor.extract_audio(payload.file_path, temp_audio)
         
-        async for packet in transcriber.transcribe_stream(
-            temp_audio, 
-            db=db, 
-            model_size=payload.model_size, 
-            language=payload.language
-        ):
-            if packet["event"] == "segment":
-                full_text.append(packet["payload"]["text"])
+#         async for packet in transcriber.transcribe_stream(
+#             temp_audio, 
+#             db=db, 
+#             model_size=payload.model_size, 
+#             language=payload.language
+#         ):
+#             if packet["event"] == "segment":
+#                 full_text.append(packet["payload"]["text"])
         
-        return {
-            "status": "success",
-            "transcript": " ".join(full_text)
-        }
-    except Exception as e:
-        logger.error(f"Sync test failed: {str(e)}")
-        return {"status": "error", "message": str(e)}
-    finally:
-        AudioProcessor.cleanup(temp_audio)
+#         return {
+#             "status": "success",
+#             "transcript": " ".join(full_text)
+#         }
+#     except Exception as e:
+#         logger.error(f"Sync test failed: {str(e)}")
+#         return {"status": "error", "message": str(e)}
+#     finally:
+#         AudioProcessor.cleanup(temp_audio)
 
 @router.get("/logs")
 async def get_logs(lines: int = 100):
@@ -112,20 +115,24 @@ async def get_logs(lines: int = 100):
     
 @router.get("/history")
 async def get_history(db: Session = Depends(get_db)):
-    records = db.query(TranscriptionRecord).order_by(TranscriptionRecord.timestamp.desc()).all()
-    return records
+    return db.query(TranscriptionRecord).order_by(TranscriptionRecord.timestamp.desc()).all()
 
 @router.get("/hardware")
 async def get_hardware_status():
-    import torch
-    return {
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "engine": "faster-whisper",
-        "vram_detected": torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 0
-    }
-
+    status = {"device": "cpu", "vram_usage": 0, "vram_total": 1}
+    if torch.cuda.is_available():
+        free, total = torch.cuda.mem_get_info()
+        status["device"] = "cuda"
+        status["vram_usage"] = (total - free) / 1024**3
+        status["vram_total"] = total / 1024**3
+    return status
 @router.get("/stream")
 async def stream_media(path: str):
     if not os.path.exists(path):
         return {"error": "File not found"}
     return FileResponse(path)
+
+@router.post("/transcribe/stop")
+async def stop_transcription():
+    transcriber.stop_inference()
+    return {"status": "stop_signal_sent"}

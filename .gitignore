@@ -18,3 +18,4 @@ Thumbs.db
 *.mp3
 models/
 data/
+*.db
