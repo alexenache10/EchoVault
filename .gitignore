@@ -16,6 +16,8 @@ Thumbs.db
 *.wav
 *.mp4
 *.mp3
-models/
+backend/models/
 data/
 *.db
+backend/echo_vault.db
+.vscode/

@@ -5,6 +5,7 @@ from app.api.routes import router as api_router
 from app.core.config import settings
 from app.utils.logger import logger
 from app.models.database import init_db
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize resources or log system info

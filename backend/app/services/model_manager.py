@@ -15,6 +15,8 @@ class ModelManager:
         model_dir = cls.get_model_dir(model_size)
         return model_dir.exists() and any(model_dir.iterdir())
 
+
+    # Download the desired model only if it is not found locally
     @classmethod
     def ensure_model(cls, model_size: str) -> str:
         model_dir = cls.get_model_dir(model_size)
